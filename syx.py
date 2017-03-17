@@ -19,7 +19,8 @@ def getPolylineModel(x,y):
 	except TypeError:
 		print(x,y)
 	gap_polyline=np.abs(y-f_polyline(x, *p_polyline))
-	return p_polyline,gap_polyline
+	gap_max=mean(gap_polyline)
+	return p_polyline,gap_max
 
 ## Get fitting circle
 x0 = []
@@ -49,7 +50,8 @@ def getCircleModel(x,y,draw=True,diag=0.00001):
 	residu = abs(Ri_2 - R_2)
 	if draw==True:
 		drawCircle(xc_2,yc_2,R_2,x,y)
-	return [xc_2, yc_2,R_2] ,residu
+	gap_max=mean(residu)
+	return [xc_2, yc_2,R_2] ,gap_max
 
 
 ###        ###
@@ -82,7 +84,8 @@ def getLeastSquare(list):
 
 def getLineModel(x,y):
 	gap_line=np.abs(y)
-	return gap_line
+	gap_max=mean(gap_line)
+	return gap_max
 def getOrientation(x,y):
 	orientation=10000
 
