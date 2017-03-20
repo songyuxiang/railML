@@ -2,7 +2,7 @@ import sys
 from PyQt5.Qt import *
 import mainwindow
 from syx import *
-
+from write_odr6 import *
 
 class mainwindow(QMainWindow, mainwindow.Ui_MainWindow):
     def __init__(self):
@@ -329,7 +329,7 @@ class mainwindow(QMainWindow, mainwindow.Ui_MainWindow):
                             right_lane_width_sOffset = 0
                             sectionInfo.append(
                                 self.formatData(n1="road", n2="lanes", n3="laneSection", n4="right", n5="lane",
-                                                n6="link", n7="successor",
+                                                n6="width",
                                                 att="sOffset",
                                                 value=right_lane_width_sOffset))
                             right_lane_width_a = parameters[i][0] - lane_parameter_right[0]
@@ -549,7 +549,7 @@ class mainwindow(QMainWindow, mainwindow.Ui_MainWindow):
                                             att="s",
                                             value=interS))
                         sectionInfo.append(
-                            self.formatData(n1="road", n2="lanes", n3="singleSide",
+                            self.formatData(n1="road", n2="lanes", n3="laneSection",
                                             att="singleSide",
                                             value=lane_section_singleSide))
                         allPass = True
@@ -651,6 +651,8 @@ class mainwindow(QMainWindow, mainwindow.Ui_MainWindow):
     def export(self):
         self.updateRoadInfo()
         filename, _ = QFileDialog.getSaveFileName(self, "Save file", "", "CSV file(*.csv);;All File(*.*)")
+        if (filename.find(".csv")<0):
+            filename=filename+".csv"
         file = QFile(filename)
         if file.open(QFile.WriteOnly):
             out = QTextStream(file)
@@ -665,7 +667,7 @@ class mainwindow(QMainWindow, mainwindow.Ui_MainWindow):
                 out<<i<<"\n"
                 print(i)
             file.close()
-
+        generateOdr(filename)
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
