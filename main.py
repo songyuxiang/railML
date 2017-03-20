@@ -32,6 +32,8 @@ class mainwindow(QMainWindow, mainwindow.Ui_MainWindow):
         self.curvePointNumber = 500
         self.tolerance = 0.01
         self.geometryInfo=[]
+        self.elevationInfo=[]
+        self.sectionInfo=[]
         self.roadInfo=[]
 
     def initUI(self):
@@ -41,12 +43,14 @@ class mainwindow(QMainWindow, mainwindow.Ui_MainWindow):
         self.pushButton_point3D.clicked.connect(self.importPoint3D)
         self.pushButton_compute.clicked.connect(self.compute)
 
+# press escape to quit
     def keyPressEvent(self, QKeyEvent):
         if QKeyEvent.key() == Qt.Key_Escape:
             self.close()
 
+# import 3D points for pointX,pointY,pointZ,point3D
     def importPoint3D(self):
-        filename, _ = QFileDialog.getOpenFileName(self, "open 3D points", "", "All File(*.*)")
+        filename, _ = QFileDialog.getOpenFileName(self, "open 3D points", "", "Text file(*.txt);;All File(*.*)")
         self.point3D = []
         with open(filename, 'r') as file:
             data_point3D = file.readlines()
@@ -59,11 +63,13 @@ class mainwindow(QMainWindow, mainwindow.Ui_MainWindow):
         self.showInEditor(self.point3D)
         self.size = len(self.point3D)
 
+# import lanes section info from a exported 3 levels python list [[[],[]],[[],[]]]
     def importLaneInfo(self):
-        filename, _ = QFileDialog.getOpenFileName(self, "open 3D points", "", "All File(*.*)")
+        filename, _ = QFileDialog.getOpenFileName(self, "open 3D points", "", "Text file(*.txt);;All File(*.*)")
         self.allLanesInfo = ReadList3L(filename)
         self.showInEditor(self.allLanesInfo)
 
+# find section points from lanes' infomation
     def getSectionPoints(self):
         for i in range(len(self.allLanesInfo) - 1):
             if not compareLaneSection(self.allLanesInfo[i], self.allLanesInfo[i + 1], False):
@@ -74,10 +80,8 @@ class mainwindow(QMainWindow, mainwindow.Ui_MainWindow):
         self.textEdit_input.setText(title)
         for i in data:
             self.textEdit_input.append(str(i))
-
-    def compute(self):
-        self.getSectionPoints()
-        self.roadLength = (len(self.point3D) - 1) * self.pointGap
+    def computeGeometry(self):
+        # compute geometry
         start = 0
         end = self.size
         gap_polyline = 10
@@ -85,9 +89,7 @@ class mainwindow(QMainWindow, mainwindow.Ui_MainWindow):
         gap_line = 10
         geometryInfo = []
         cumulateLength = 0
-
         while self.size - start >= 2:
-            print(start, end)
             hdg = getOrientation(self.pointX[start + 1] - self.pointX[start],
                                  self.pointY[start + 1] - self.pointY[start])
             x, y = rotateAndTranslate(self.pointX[start:end], self.pointY[start:end], -hdg, self.pointX[start],
@@ -106,7 +108,7 @@ class mainwindow(QMainWindow, mainwindow.Ui_MainWindow):
                 geometryInfo.append(
                     self.formatData(n1="road", n2="planView", n3="geometry", att="s", value=cumulateLength))
                 cumulateLength = cumulateLength + polylineLength
-
+                print(cumulateLength)
                 geometryInfo.append(
                     self.formatData(n1="road", n2="planView", n3="geometry", att="x", value=self.pointX[start]))
                 geometryInfo.append(
@@ -156,10 +158,448 @@ class mainwindow(QMainWindow, mainwindow.Ui_MainWindow):
                     self.formatData(n1="road", n2="planView", n3="geometry", att="length", value=polylineLength))
                 start = end - 1
                 end = self.size
-        self.geometryInfo=geometryInfo
+        self.geometryInfo = geometryInfo
+    def computeSection(self):
+        laneSectionNb = len(self.sectionPoint) + 1
+        sectionStartPos = 0
+        sectionS = 0
+        sectionInfo = []
+        for i in range(laneSectionNb):
+            try:
+                sectionPts = self.point3D[sectionStartPos:self.sectionPoint[i][0]]
+                sectionLanesInfo = self.allLanesInfo[sectionStartPos:self.sectionPoint[i][0]]
+            except IndexError:
+                sectionPts = self.point3D[sectionStartPos:self.size]
+                sectionLanesInfo = self.allLanesInfo[sectionStartPos:self.size]
+            s = len(sectionPts) * self.pointGap
+            try:
+                sectionStartPos = self.sectionPoint[i][0]
+            except IndexError:
+                sectionStartPos = self.size
+
+            lane_section_s = sectionS
+            lane_section_singleSide = ""
+            sectionInfo.append(self.formatData(n1="road", n2="lanes", n3="laneSection", att="s", value=lane_section_s))
+
+            if checkSingleSide(sectionLanesInfo[0]):
+                lane_section_singleSide = "true"
+            else:
+                lane_section_singleSide = "false"
+
+            sectionInfo.append(self.formatData(n1="road", n2="lanes", n3="laneSection", att="singleSide",
+                                               value=lane_section_singleSide))
+
+            allPass = True
+            startPos = 0
+            sectionSize = len(sectionLanesInfo)
+            endPos = sectionSize + 1
+            interS = sectionS
+            while startPos < sectionSize - 1:
+                lane_id_right = 0
+                lane_id_left = 0
+                lane_parameter_right = [0, 0, 0, 0]
+                lane_parameter_left = [0, 0, 0, 0]
+                parameters = []
+                distantAllLanes = analyseSectionLanes(sectionLanesInfo[startPos:endPos])
+                # print(distantAllLanes)
+                for lane in distantAllLanes:
+
+                    a, b, c, d, s, gap = getSectionGeometry(lane[1:])
+                    parameters.append([a, b, c, d, s, gap])
+                    if gap > 0.02:
+                        allPass = False
+                # print(allPass)
+                if allPass == False:
+                    endPos = endPos - 1
+                    allPass = True
+                    continue
+                else:
+                    # print(parameters)
+                    for i in range(len(parameters)):
+
+                        if distantAllLanes[i][0] == "center":
+                            center_lane_id = 0
+                            center_lane_type = sectionLanesInfo[0][i][5]
+                            sectionInfo.append(
+                                self.formatData(n1="road", n2="lanes", n3="laneSection", n4="center", n5="lane",
+                                                att="type",
+                                                value=center_lane_type))
+                            sectionInfo.append(
+                                self.formatData(n1="road", n2="lanes", n3="laneSection", n4="center", n5="lane",
+                                                att="id",
+                                                value=center_lane_id))
+                            sectionInfo.append(
+                                self.formatData(n1="road", n2="lanes", n3="laneSection", n4="center", n5="lane",
+                                                att="level",
+                                                value="true"))
+                            sectionInfo.append(
+                                self.formatData(n1="road", n2="lanes", n3="laneSection", n4="center", n5="lane",
+                                                n6="link", n7="predecessor",
+                                                att="id",
+                                                value=0))
+                            sectionInfo.append(
+                                self.formatData(n1="road", n2="lanes", n3="laneSection", n4="center", n5="lane",
+                                                n6="link", n7="successor",
+                                                att="id",
+                                                value=0))
+
+                            center_lane_roadmark_type = sectionLanesInfo[0][i][3]
+                            if center_lane_roadmark_type != "":
+                                center_lane_roadmark_offset = 0
+                                sectionInfo.append(
+                                    self.formatData(n1="road", n2="lanes", n3="laneSection", n4="center", n5="lane",
+                                                    n6="roadMark",
+                                                    att="sOffset",
+                                                    value=center_lane_roadmark_offset))
+                                sectionInfo.append(
+                                    self.formatData(n1="road", n2="lanes", n3="laneSection", n4="center", n5="lane",
+                                                    n6="roadMark",
+                                                    att="type",
+                                                    value=center_lane_roadmark_type))
+
+                                center_lane_roadmark_weight = sectionLanesInfo[0][i][4]
+                                sectionInfo.append(
+                                    self.formatData(n1="road", n2="lanes", n3="laneSection", n4="center", n5="lane",
+                                                    n6="roadMark",
+                                                    att="weight",
+                                                    value=center_lane_roadmark_weight))
+
+                                # to add#
+                                center_lane_roadmark_color = "standard"
+                                sectionInfo.append(
+                                    self.formatData(n1="road", n2="lanes", n3="laneSection", n4="center", n5="lane",
+                                                    n6="roadMark",
+                                                    att="color",
+                                                    value=center_lane_roadmark_color))
+                                center_lane_roadmark_material = "standard"
+                                sectionInfo.append(
+                                    self.formatData(n1="road", n2="lanes", n3="laneSection", n4="center", n5="lane",
+                                                    n6="roadMark",
+                                                    att="material",
+                                                    value=center_lane_roadmark_material))
+
+                                center_lane_roadmark_width = float(sectionLanesInfo[0][i][2]) / 1000
+                                sectionInfo.append(
+                                    self.formatData(n1="road", n2="lanes", n3="laneSection", n4="center", n5="lane",
+                                                    n6="roadMark",
+                                                    att="width",
+                                                    value=center_lane_roadmark_width))
+                                center_lane_roadmark_laneChange = "none"
+                                sectionInfo.append(
+                                    self.formatData(n1="road", n2="lanes", n3="laneSection", n4="center", n5="lane",
+                                                    n6="roadMark",
+                                                    att="laneChange",
+                                                    value=center_lane_roadmark_laneChange))
+                                center_lane_roadmark_height = 0
+                                sectionInfo.append(
+                                    self.formatData(n1="road", n2="lanes", n3="laneSection", n4="center", n5="lane",
+                                                    n6="roadMark",
+                                                    att="height",
+                                                    value=center_lane_roadmark_height))
+                        if distantAllLanes[i][0] == "right":
+                            lane_id_right = lane_id_right - 1
+                            right_lane_type = sectionLanesInfo[0][i][5]
+                            right_lane_id = lane_id_right
+                            sectionInfo.append(
+                                self.formatData(n1="road", n2="lanes", n3="laneSection", n4="right", n5="lane",
+                                                att="type",
+                                                value=right_lane_type))
+                            sectionInfo.append(
+                                self.formatData(n1="road", n2="lanes", n3="laneSection", n4="right", n5="lane",
+                                                att="id",
+                                                value=right_lane_id))
+                            sectionInfo.append(
+                                self.formatData(n1="road", n2="lanes", n3="laneSection", n4="right", n5="lane",
+                                                att="level",
+                                                value="true"))
+
+                            right_lane_predecessor_id = right_lane_id
+                            sectionInfo.append(
+                                self.formatData(n1="road", n2="lanes", n3="laneSection", n4="right", n5="lane",
+                                                n6="link", n7="predecessor",
+                                                att="id",
+                                                value=right_lane_predecessor_id))
+                            right_lane_successor_id = right_lane_id
+                            sectionInfo.append(
+                                self.formatData(n1="road", n2="lanes", n3="laneSection", n4="right", n5="lane",
+                                                n6="link", n7="successor",
+                                                att="id",
+                                                value=right_lane_successor_id))
+
+                            right_lane_width_sOffset = 0
+                            sectionInfo.append(
+                                self.formatData(n1="road", n2="lanes", n3="laneSection", n4="right", n5="lane",
+                                                n6="link", n7="successor",
+                                                att="sOffset",
+                                                value=right_lane_width_sOffset))
+                            right_lane_width_a = parameters[i][0] - lane_parameter_right[0]
+                            right_lane_width_b = parameters[i][1] - lane_parameter_right[1]
+                            right_lane_width_c = parameters[i][2] - lane_parameter_right[2]
+                            right_lane_width_d = parameters[i][3] - lane_parameter_right[3]
+                            lane_parameter_right[0] = parameters[i][0]
+                            lane_parameter_right[1] = parameters[i][1]
+                            lane_parameter_right[2] = parameters[i][2]
+                            lane_parameter_right[3] = parameters[i][3]
+                            sectionInfo.append(
+                                self.formatData(n1="road", n2="lanes", n3="laneSection", n4="right", n5="lane",
+                                                n6="width",
+                                                att="a",
+                                                value=right_lane_width_a))
+                            sectionInfo.append(
+                                self.formatData(n1="road", n2="lanes", n3="laneSection", n4="right", n5="lane",
+                                                n6="width",
+                                                att="b",
+                                                value=right_lane_width_b))
+                            sectionInfo.append(
+                                self.formatData(n1="road", n2="lanes", n3="laneSection", n4="right", n5="lane",
+                                                n6="width",
+                                                att="c",
+                                                value=right_lane_width_c))
+                            sectionInfo.append(
+                                self.formatData(n1="road", n2="lanes", n3="laneSection", n4="right", n5="lane",
+                                                n6="width",
+                                                att="d",
+                                                value=right_lane_width_d))
+
+                            right_lane_roadmark_type = sectionLanesInfo[0][i][3]
+                            if right_lane_roadmark_type != "":
+                                right_lane_roadmark_offset = 0
+                                sectionInfo.append(
+                                    self.formatData(n1="road", n2="lanes", n3="laneSection", n4="right", n5="lane",
+                                                    n6="roadMark",
+                                                    att="sOffset",
+                                                    value=right_lane_roadmark_offset))
+                                sectionInfo.append(
+                                    self.formatData(n1="road", n2="lanes", n3="laneSection", n4="right", n5="lane",
+                                                    n6="roadMark",
+                                                    att="type",
+                                                    value=right_lane_roadmark_type))
+
+                                right_lane_roadmark_weight = sectionLanesInfo[0][i][4]
+                                sectionInfo.append(
+                                    self.formatData(n1="road", n2="lanes", n3="laneSection", n4="right", n5="lane",
+                                                    n6="roadMark",
+                                                    att="weight",
+                                                    value=right_lane_roadmark_weight))
+
+                                right_lane_roadmark_color = "standard"
+                                sectionInfo.append(
+                                    self.formatData(n1="road", n2="lanes", n3="laneSection", n4="right", n5="lane",
+                                                    n6="roadMark",
+                                                    att="color",
+                                                    value=right_lane_roadmark_color))
+
+                                right_lane_roadmark_material = "standard"
+                                sectionInfo.append(
+                                    self.formatData(n1="road", n2="lanes", n3="laneSection", n4="right", n5="lane",
+                                                    n6="roadMark",
+                                                    att="material",
+                                                    value=right_lane_roadmark_material))
+
+                                right_lane_roadmark_width = float(sectionLanesInfo[0][i][2]) / 1000
+                                sectionInfo.append(
+                                    self.formatData(n1="road", n2="lanes", n3="laneSection", n4="right", n5="lane",
+                                                    n6="roadMark",
+                                                    att="width",
+                                                    value=right_lane_roadmark_width))
+
+                                right_lane_roadmark_laneChange = "none"
+                                sectionInfo.append(
+                                    self.formatData(n1="road", n2="lanes", n3="laneSection", n4="right", n5="lane",
+                                                    n6="roadMark",
+                                                    att="laneChange",
+                                                    value=right_lane_roadmark_laneChange))
+
+                                right_lane_roadmark_height = 0
+                                sectionInfo.append(
+                                    self.formatData(n1="road", n2="lanes", n3="laneSection", n4="right", n5="lane",
+                                                    n6="roadMark",
+                                                    att="height",
+                                                    value=right_lane_roadmark_height))
+
+                        if distantAllLanes[i][0] == "left":
+                            lane_id_left = lane_id_left + 1
+                            left_lane_type = sectionLanesInfo[0][i][5]
+                            left_lane_id = lane_id_left
+                            sectionInfo.append(
+                                self.formatData(n1="road", n2="lanes", n3="laneSection", n4="left", n5="lane",
+                                                att="type",
+                                                value=left_lane_type))
+                            sectionInfo.append(
+                                self.formatData(n1="road", n2="lanes", n3="laneSection", n4="left", n5="lane",
+                                                att="id",
+                                                value=left_lane_id))
+                            sectionInfo.append(
+                                self.formatData(n1="road", n2="lanes", n3="laneSection", n4="left", n5="lane",
+                                                att="level",
+                                                value="true"))
+                            left_lane_predecessor_id = left_lane_id
+                            sectionInfo.append(
+                                self.formatData(n1="road", n2="lanes", n3="laneSection", n4="left", n5="lane",
+                                                n6="link", n7="predecessor",
+                                                att="id",
+                                                value=left_lane_predecessor_id))
+
+                            left_lane_successor_id = left_lane_id
+                            sectionInfo.append(
+                                self.formatData(n1="road", n2="lanes", n3="laneSection", n4="left", n5="lane",
+                                                n6="link", n7="successor",
+                                                att="id",
+                                                value=left_lane_successor_id))
+
+                            left_lane_width_sOffset = 0
+                            sectionInfo.append(
+                                self.formatData(n1="road", n2="lanes", n3="laneSection", n4="left", n5="lane",
+                                                n6="width",
+                                                att="sOffset",
+                                                value=left_lane_width_sOffset))
+
+                            left_lane_width_a = parameters[i][0] - lane_parameter_left[0]
+                            left_lane_width_b = parameters[i][1] - lane_parameter_left[1]
+                            left_lane_width_c = parameters[i][2] - lane_parameter_left[2]
+                            left_lane_width_d = parameters[i][3] - lane_parameter_left[3]
+                            lane_parameter_left[0] = parameters[i][0]
+                            lane_parameter_left[1] = parameters[i][1]
+                            lane_parameter_left[2] = parameters[i][2]
+                            lane_parameter_left[3] = parameters[i][3]
+                            sectionInfo.append(
+                                self.formatData(n1="road", n2="lanes", n3="laneSection", n4="left", n5="lane",
+                                                n6="width",
+                                                att="a",
+                                                value=left_lane_width_a))
+                            sectionInfo.append(
+                                self.formatData(n1="road", n2="lanes", n3="laneSection", n4="left", n5="lane",
+                                                n6="width",
+                                                att="b",
+                                                value=left_lane_width_b))
+                            sectionInfo.append(
+                                self.formatData(n1="road", n2="lanes", n3="laneSection", n4="left", n5="lane",
+                                                n6="width",
+                                                att="c",
+                                                value=left_lane_width_c))
+                            sectionInfo.append(
+                                self.formatData(n1="road", n2="lanes", n3="laneSection", n4="left", n5="lane",
+                                                n6="width",
+                                                att="d",
+                                                value=left_lane_width_d))
+
+                            # to add
+                            left_lane_roadmark_type = sectionLanesInfo[0][i][3]
+                            if left_lane_roadmark_type != "":
+                                left_lane_roadmark_offset = 0
+                                sectionInfo.append(
+                                    self.formatData(n1="road", n2="lanes", n3="laneSection", n4="left", n5="lane",
+                                                    n6="roadMark",
+                                                    att="sOffset",
+                                                    value=left_lane_roadmark_offset))
+                                sectionInfo.append(
+                                    self.formatData(n1="road", n2="lanes", n3="laneSection", n4="left", n5="lane",
+                                                    n6="roadMark",
+                                                    att="type",
+                                                    value=left_lane_roadmark_type))
+
+                                left_lane_roadmark_weight = sectionLanesInfo[0][i][4]
+                                sectionInfo.append(
+                                    self.formatData(n1="road", n2="lanes", n3="laneSection", n4="left", n5="lane",
+                                                    n6="roadMark",
+                                                    att="weight",
+                                                    value=left_lane_roadmark_weight))
+
+                                left_lane_roadmark_color = "standard"
+                                sectionInfo.append(
+                                    self.formatData(n1="road", n2="lanes", n3="laneSection", n4="left", n5="lane",
+                                                    n6="roadMark",
+                                                    att="color",
+                                                    value=left_lane_roadmark_color))
+
+                                left_lane_roadmark_material = "standard"
+                                sectionInfo.append(
+                                    self.formatData(n1="road", n2="lanes", n3="laneSection", n4="left", n5="lane",
+                                                    n6="roadMark",
+                                                    att="material",
+                                                    value=left_lane_roadmark_material))
+                                left_lane_roadmark_width = float(sectionLanesInfo[0][i][2]) / 1000
+
+                                sectionInfo.append(
+                                    self.formatData(n1="road", n2="lanes", n3="laneSection", n4="left", n5="lane",
+                                                    n6="roadMark",
+                                                    att="width",
+                                                    value=left_lane_roadmark_width))
+                                left_lane_roadmark_laneChange = "none"
+                                sectionInfo.append(
+                                    self.formatData(n1="road", n2="lanes", n3="laneSection", n4="left", n5="lane",
+                                                    n6="roadMark",
+                                                    att="laneChange",
+                                                    value=left_lane_roadmark_laneChange))
+
+                                left_lane_roadmark_height = 0
+                                sectionInfo.append(
+                                    self.formatData(n1="road", n2="lanes", n3="laneSection", n4="left", n5="lane",
+                                                    n6="roadMark",
+                                                    att="height",
+                                                    value=left_lane_roadmark_height))
+                    startPos = endPos - 1
+                    # print(interS)
+                    interS = interS + s
+
+                    if endPos < sectionSize + 1:
+                        endPos = sectionSize + 1
+                        sectionInfo.append(
+                            self.formatData(n1="road", n2="lanes", n3="laneSection",
+                                            att="s",
+                                            value=interS))
+                        sectionInfo.append(
+                            self.formatData(n1="road", n2="lanes", n3="singleSide",
+                                            att="singleSide",
+                                            value=lane_section_singleSide))
+                        allPass = True
+            sectionS = sectionS + s
+        self.sectionInfo = sectionInfo
+    def computeElevation(self):
+        start = 0
+        end = self.size
+        gap_polyline = 10
+        elevationInfo = []
+        cumulateLength = 0
+        while self.size - start >= 2:
+            z=self.pointZ[start:end]
+            x=linspace(0,(end-start-1)*self.pointGap,end-start)
+            print(len(z),len(x))
+            if len(x) >= 4:
+                para_polyline, gap_polyline = getPolylineModel(x, z)
+            else:
+                print("elevation error")
+
+            if gap_polyline > self.tolerance:
+                end = end - 1
+                continue
+            else:
+                polylineLength = (len(x) - 1) * self.pointGap
+                elevationInfo.append(
+                    self.formatData(n1="road", n2="elevationProfile", n3="elevation", att="s", value=cumulateLength))
+                cumulateLength = cumulateLength + polylineLength
+
+                elevationInfo.append(
+                    self.formatData(n1="road", n2="elevationProfile", n3="elevation", att="a", value=para_polyline[3]))
+                elevationInfo.append(
+                    self.formatData(n1="road", n2="elevationProfile", n3="elevation", att="b", value=para_polyline[2]))
+                elevationInfo.append(self.formatData(n1="road", n2="elevationProfile", n3="elevation",att="c",
+                                                    value=para_polyline[1]))
+                elevationInfo.append(self.formatData(n1="road", n2="elevationProfile", n3="elevation",att="d",
+                                                    value=para_polyline[0]))
+                start = end - 1
+                end = self.size
+        self.elevationInfo=elevationInfo
+    def compute(self):
+        self.getSectionPoints()
+        self.roadLength = (len(self.point3D) - 1) * self.pointGap
+        self.computeGeometry()
+        self.computeElevation()
+        self.computeSection()
 
     def updateRoadInfo(self):
         self.currentRoadName = self.lineEdit_roadName.text()
+        self.roadLength=(len(self.allLanesInfo)-1)*self.pointGap
         self.currentRoadID = self.lineEdit_roadID.text()
         self.currentJunctionID = self.lineEdit_currentJunctionId.text()
         self.currentRoadType = self.comboBox_roadType.currentText()
@@ -170,6 +610,7 @@ class mainwindow(QMainWindow, mainwindow.Ui_MainWindow):
         self.successorType = self.comboBox_successorType.currentText()
         self.successorContactPoint = self.comboBox_successorContactPoint.currentText()
         self.successorID = self.lineEdit_successorId.text()
+        self.roadInfo=[]
         self.roadInfo.append(self.formatData(n1="road", att="name", value=self.currentRoadName))
         self.roadInfo.append(self.formatData(n1="road", att="id", value=self.currentRoadID))
         self.roadInfo.append(self.formatData(n1="road", att="junction", value=self.currentJunctionID))
@@ -202,13 +643,28 @@ class mainwindow(QMainWindow, mainwindow.Ui_MainWindow):
             self.textEdit_preview.append(i)
         for i in self.geometryInfo:
             self.textEdit_preview.append(i)
+        for i in self.elevationInfo:
+            self.textEdit_preview.append(i)
+        for i in self.sectionInfo:
+            self.textEdit_preview.append(i)
 
     def export(self):
-        filename, _ = QFileDialog.getSaveFileName(self, "Save file", "", "All File(*.*)")
+        self.updateRoadInfo()
+        filename, _ = QFileDialog.getSaveFileName(self, "Save file", "", "CSV file(*.csv);;All File(*.*)")
         file = QFile(filename)
-        if file.open(QFile.ReadWrite):
+        if file.open(QFile.WriteOnly):
             out = QTextStream(file)
-            out << self.textEdit_preview.toPlainText()
+            for i in self.roadInfo:
+                out<<i<<"\n"
+            for i in self.geometryInfo:
+                out<<i<<"\n"
+            for i in self.elevationInfo:
+                out<<i<<"\n"
+                print(i)
+            for i in self.sectionInfo:
+                out<<i<<"\n"
+                print(i)
+            file.close()
 
 
 if __name__ == '__main__':
