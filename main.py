@@ -3,7 +3,7 @@ from PyQt5.Qt import *
 import mainwindow
 from syx import *
 from write_odr6 import *
-
+import subprocess
 class mainwindow(QMainWindow, mainwindow.Ui_MainWindow):
     def __init__(self):
         super(self.__class__, self).__init__()
@@ -35,18 +35,21 @@ class mainwindow(QMainWindow, mainwindow.Ui_MainWindow):
         self.elevationInfo=[]
         self.sectionInfo=[]
         self.roadInfo=[]
-
+        self.allRoadsInfo={}
+        self.listViewModel=QStandardItemModel(1000,1)
     def initUI(self):
         self.pushButton_input.clicked.connect(self.importLaneInfo)
-        self.pushButton_preview.clicked.connect(self.previewInfo)
         self.pushButton_export.clicked.connect(self.export)
         self.pushButton_point3D.clicked.connect(self.importPoint3D)
         self.pushButton_compute.clicked.connect(self.compute)
+        self.listView_allRoads.clicked.connect(self.loadRoadInfo)
 
 # press escape to quit
     def keyPressEvent(self, QKeyEvent):
         if QKeyEvent.key() == Qt.Key_Escape:
             self.close()
+
+
 
 # import 3D points for pointX,pointY,pointZ,point3D
     def importPoint3D(self):
@@ -108,7 +111,6 @@ class mainwindow(QMainWindow, mainwindow.Ui_MainWindow):
                 geometryInfo.append(
                     self.formatData(n1="road", n2="planView", n3="geometry", att="s", value=cumulateLength))
                 cumulateLength = cumulateLength + polylineLength
-                print(cumulateLength)
                 geometryInfo.append(
                     self.formatData(n1="road", n2="planView", n3="geometry", att="x", value=self.pointX[start]))
                 geometryInfo.append(
@@ -201,20 +203,17 @@ class mainwindow(QMainWindow, mainwindow.Ui_MainWindow):
                 lane_parameter_left = [0, 0, 0, 0]
                 parameters = []
                 distantAllLanes = analyseSectionLanes(sectionLanesInfo[startPos:endPos])
-                # print(distantAllLanes)
                 for lane in distantAllLanes:
 
                     a, b, c, d, s, gap = getSectionGeometry(lane[1:])
                     parameters.append([a, b, c, d, s, gap])
                     if gap > 0.02:
                         allPass = False
-                # print(allPass)
                 if allPass == False:
                     endPos = endPos - 1
                     allPass = True
                     continue
                 else:
-                    # print(parameters)
                     for i in range(len(parameters)):
 
                         if distantAllLanes[i][0] == "center":
@@ -539,7 +538,6 @@ class mainwindow(QMainWindow, mainwindow.Ui_MainWindow):
                                                     att="height",
                                                     value=left_lane_roadmark_height))
                     startPos = endPos - 1
-                    # print(interS)
                     interS = interS + s
 
                     if endPos < sectionSize + 1:
@@ -564,7 +562,6 @@ class mainwindow(QMainWindow, mainwindow.Ui_MainWindow):
         while self.size - start >= 2:
             z=self.pointZ[start:end]
             x=linspace(0,(end-start-1)*self.pointGap,end-start)
-            print(len(z),len(x))
             if len(x) >= 4:
                 para_polyline, gap_polyline = getPolylineModel(x, z)
             else:
@@ -590,13 +587,25 @@ class mainwindow(QMainWindow, mainwindow.Ui_MainWindow):
                 start = end - 1
                 end = self.size
         self.elevationInfo=elevationInfo
+    def updateListWidget(self):
+        rowIndex=0
+        self.allRoadsInfo[self.currentRoadID] = [self.roadInfo, self.geometryInfo, self.sectionInfo]
+
+        for i in self.allRoadsInfo.keys():
+            index = self.listViewModel.index(rowIndex,0)
+            self.listViewModel.setData(index,i)
+            rowIndex=rowIndex+1
+
+        self.listView_allRoads.setModel(self.listViewModel)
     def compute(self):
         self.getSectionPoints()
         self.roadLength = (len(self.point3D) - 1) * self.pointGap
+        self.updateRoadInfo()
         self.computeGeometry()
         self.computeElevation()
         self.computeSection()
-
+        self.previewInfo()
+        self.updateListWidget()
     def updateRoadInfo(self):
         self.currentRoadName = self.lineEdit_roadName.text()
         self.roadLength=(len(self.allLanesInfo)-1)*self.pointGap
@@ -635,21 +644,26 @@ class mainwindow(QMainWindow, mainwindow.Ui_MainWindow):
     def formatData(self, n1="", n2="", n3="", n4="", n5="", n6="", n7="", n8="", att="", value=""):
         out = "%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|" % (self.currentRoadID, n1, n2, n3, n4, n5, n6, n7, n8, att, value)
         return out
-
+    def loadRoadInfo(self,index):
+        id=self.listViewModel.data(index)
+        if id!="":
+            self.displayAllRoadDictionary(self.allRoadsInfo[id])
+    def displayAllRoadDictionary(self,list):
+        for i in list:
+            for j in i:
+                self.textEdit_input.append(j)
     def previewInfo(self):
-        self.updateRoadInfo()
-        self.textEdit_preview.setText("")
+        self.textEdit_input.setText("")
         for i in self.roadInfo:
-            self.textEdit_preview.append(i)
+            self.textEdit_input.append(i)
         for i in self.geometryInfo:
-            self.textEdit_preview.append(i)
+            self.textEdit_input.append(i)
         for i in self.elevationInfo:
-            self.textEdit_preview.append(i)
+            self.textEdit_input.append(i)
         for i in self.sectionInfo:
-            self.textEdit_preview.append(i)
+            self.textEdit_input.append(i)
 
     def export(self):
-        self.updateRoadInfo()
         filename, _ = QFileDialog.getSaveFileName(self, "Save file", "", "CSV file(*.csv);;All File(*.*)")
         if (filename.find(".csv")<0):
             filename=filename+".csv"
@@ -662,12 +676,10 @@ class mainwindow(QMainWindow, mainwindow.Ui_MainWindow):
                 out<<i<<"\n"
             for i in self.elevationInfo:
                 out<<i<<"\n"
-                print(i)
             for i in self.sectionInfo:
                 out<<i<<"\n"
-                print(i)
             file.close()
-        generateOdr(filename)
+        subprocess.call(["odrviewer"])
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
